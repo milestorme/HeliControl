@@ -262,47 +262,47 @@ namespace Oxide.Plugins
 
 
             DisableHeli = GetConfig("Spawning - Disable Helicopter", false);
-            DisableDefaultHeliSpawns = GetConfig("Spawning - Disable Rust's default spawns", false);
-            DisableDefaultChinookSpawns = GetConfig("Spawning - Disable CH47 default spawns", false);
+            DisableDefaultHeliSpawns = GetConfig("Spawning - Disable Rust's default spawns", true);
+            DisableDefaultChinookSpawns = GetConfig("Spawning - Disable CH47 default spawns", true);
             UseCustomLoot = GetConfig("Loot - Use Custom loot spawns", false);
-            GlobalDamageMultiplier = GetConfig("Damage - Global damage multiplier", 1f);
-            HeliBulletDamageAmount = GetConfig("Turrets - Helicopter bullet damage", 20f);
-            HelicopterCanShootWhileDying = GetConfig("Misc - Helicopter can shoot while dying", true);
+            GlobalDamageMultiplier = GetConfig("Damage - Global damage multiplier", 0.5f);
+            HeliBulletDamageAmount = GetConfig("Turrets - Helicopter bullet damage", 10f);
+            HelicopterCanShootWhileDying = GetConfig("Misc - Helicopter can shoot while dying", false);
             MainRotorHealth = GetConfig("Health - Main rotor health", 750f);
             TailRotorHealth = GetConfig("Health - Tail rotor health", 375f);
-            BaseHealth = GetConfig("Health - Base Helicopter health", 10000f);
+            BaseHealth = GetConfig("Health - Base Helicopter health", 6000f);
             BaseChinookHealth = GetConfig("Health - Base CH47 health", 4000f);
             MaxLootCrates = GetConfig("Loot - Max Crates to drop", 4);
             HeliSpeed = GetConfig("Misc - Helicopter speed", 25f);
-            HeliAccuracy = GetConfig("Turrets - Helicopter bullet accuracy", 2f);
+            HeliAccuracy = GetConfig("Turrets - Helicopter bullet accuracy", 1f);
             MaxHeliRockets = GetConfig("Rockets - Max helicopter rockets", 12);
             DisableGibs = GetConfig("Spawning - Disable helicopter gibs", false);
-            DisableNapalm = GetConfig("Spawning - Disable helicopter napalm", false);
+            DisableNapalm = GetConfig("Spawning - Disable helicopter napalm", true);
             BulletSpeed = GetConfig("Turrets - Helicopter bullet speed", 250);
-            TimeBeforeUnlocking = GetConfig("Loot - Time before unlocking crates", -1f);
-            TimeBeforeUnlockingHack = GetConfig("Loot - Time before unlocking CH47 crates", -1f);
+            TimeBeforeUnlocking = GetConfig("Loot - Time before unlocking crates", 300f);
+            TimeBeforeUnlockingHack = GetConfig("Loot - Time before unlocking CH47 crates", 300f);
             LifeTimeMinutes = GetConfig("Misc - Maximum helicopter life time in minutes", 15);
             LifeTimeMinutesCH47 = GetConfig("Misc - Maximum CH47 life time in minutes", 15);
-            TimeBetweenRockets = GetConfig("Rockets - Time between each rocket in seconds", 0.2f);
+            TimeBetweenRockets = GetConfig("Rockets - Time between each rocket in seconds", 0.4f);
             TurretFireRate = GetConfig("Turrets - Turret fire rate in seconds", 0.125f);
             TurretBurstLength = GetConfig("Turrets - Turret burst length in seconds", 3f);
             TurretTimeBetweenBursts = GetConfig("Turrets - Time between turret bursts in seconds", 3f);
             TurretMaxRange = GetConfig("Turrets - Max range", 300f);
-            RocketDamageBlunt = GetConfig("Rockets - Blunt damage to deal", 175f);
-            RocketDamageExplosion = GetConfig("Rockets - Explosion damage to deal", 100f);
-            RocketExplosionRadius = GetConfig("Rockets - Explosion radius", 6f);
-            GibsTooHotLength = GetConfig("Gibs - Time until gibs can be harvested in seconds", 480f);
+            RocketDamageBlunt = GetConfig("Rockets - Blunt damage to deal", 90f);
+            RocketDamageExplosion = GetConfig("Rockets - Explosion damage to deal", 25f);
+            RocketExplosionRadius = GetConfig("Rockets - Explosion radius", 3f);
+            GibsTooHotLength = GetConfig("Gibs - Time until gibs can be harvested in seconds", 300f);
             GibsHealth = GetConfig("Gibs - Health of gibs", 500f);
-            MinSpawnTime = GetConfig("Spawning - Automatically call helicopter between min seconds", 0f);
-            MaxSpawnTime = GetConfig("Spawning - Automatically call helicopter between max seconds", 0f);
-            MinSpawnTimeCH47 = GetConfig("Spawning - Automatically call CH47 between min seconds", 0f);
-            MaxSpawnTimeCH47 = GetConfig("Spawning - Automatically call CH47 between max seconds", 0f);
+            MinSpawnTime = GetConfig("Spawning - Automatically call helicopter between min seconds", 7200f);
+            MaxSpawnTime = GetConfig("Spawning - Automatically call helicopter between max seconds", 14400f);
+            MinSpawnTimeCH47 = GetConfig("Spawning - Automatically call CH47 between min seconds", 7200f);
+            MaxSpawnTimeCH47 = GetConfig("Spawning - Automatically call CH47 between max seconds", 7200f);
             UseOldSpawning = GetConfig("Spawning - Use static spawning", false);
             UseOldSpawningCH47 = GetConfig("Spawning - Use static spawning for CH47", false);
             SpawnHeliOnRestart = GetConfig("Spawning - Spawn helicopter after restart", false);
             SpawnChinookOnRestart = GetConfig("Spawning - Spawn CH47 after restart", false);
             AutoCallIfExists = GetConfig("Spawning - Automatically call helicopter if one is already flying", false);
-            SpawnHeliOnTarget = GetConfig("Spawning - Spawn helicopters directly on target", true);
+            SpawnHeliOnTarget = GetConfig("Spawning - Spawn helicopters directly on target", false);
             AutoCallIfExistsCH47 = GetConfig("Spawning - Automatically call CH47 if one is already flying", false);
             HelicoptersToSpawn = GetConfig("Spawning - Helicopters to spawn", 1);
             ChinooksToSpawn = GetConfig("Spawning - Chinooks to spawn", 1);
@@ -310,7 +310,7 @@ namespace Oxide.Plugins
             HeliStartSpeed = GetConfig("Misc - Helicopter startup speed", 25f);
             HeliStartLength = GetConfig("Misc - Helicopter startup length in seconds", 0f);
             DisableCratesDeath = GetConfig("Misc - Prevent crates from spawning when forcefully killing helicopter", true);
-            MaxActiveHelicopters = GetConfig("Spawning - Max active helicopters", -1);
+            MaxActiveHelicopters = GetConfig("Spawning - Max active helicopters", 1);
         }
         protected override void LoadDefaultMessages()
         {

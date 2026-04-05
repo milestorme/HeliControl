@@ -1,222 +1,186 @@
 # 🚁 HeliControl
 
-Heli Control allows tweaking various settings of helicopters on the server.
+HeliControl provides full control over Patrol Helicopters and CH47 Chinooks on your Rust server.
+
+This version has been patched for stability, performance, and improved spawn handling, including fixes for CH47 behavior and optimized entity processing.
+
+---
+
+## ✨ Features
+
+- Full control over helicopter & CH47 stats
+- Custom spawn timers (heli + CH47)
+- Disable vanilla Rust helicopter events
+- Improved CH47 stability and spawn logic
+- Performance-optimized entity handling
+- Custom loot system support
+- Cooldown & limit system
+- Admin and player command support
+
+---
+
+## ⚠️ Important Behavior Changes (This Version)
+
+- Default Rust heli + CH47 spawns can be fully disabled
+- CH47 spawn handling improved to reduce stuck/hover issues
+- Safer entity cleanup and tracking
+- Optimized OnEntitySpawned performance
+- Fixed missing helper methods and compile issues
 
 ---
 
 ## 📜 Commands
 
-All commands work in both chat and console/RCon
+All commands work in chat and console/RCon.
 
-### Chat & Console Commands
+### Core Commands
 
-/callheli  
-/callch47  
-/killheli  
-/killheli forced  
-/killch47  
-/killch47 forced  
-/killgibs  
-/killnapalm  
-/strafe  
-/helidest  
-/helispawn  
-/updatehelis  
-/tpheli  
-/tpheli ch47  
-/unlockcrates  
-/unlockcrates ch47  
+/callheli
+/callch47
+/killheli
+/killheli forced
+/killch47
+/killch47 forced
+/killgibs
+/killnapalm
+/strafe
+/helidest
+/helispawn
+/updatehelis
+/tpheli
+/tpheli ch47
+/unlockcrates
+/unlockcrates ch47
 
-### Command Notes
-
-- `/strafe` — Tells the heli to strafe player's position  
-- `/helidest` — Tells the heli to fly to a player's position  
-- `/helispawn` — Add a custom spawn point  
-- `/updatehelis` — Apply config changes (plugin reload still required)  
-- `/tpheli` — Teleport under heli (`/tpheli ch47` for CH47)  
-- `/unlockcrates` — Unlock heli or CH47 crates  
-
-### Console Command
+### Console
 
 callheli pos x y z
-
-> Note: `/killheli` will only drop loot if:
-> `"Misc - Prevent crates from spawning when forcefully killing helicopter"` = false
 
 ---
 
 ## ⚙️ Configuration
 
-Located in:
-`/oxide/config/HeliControl.json`
+Location:
+/oxide/config/HeliControl.json
 
-- Default config matches vanilla Rust
-- Plugin does NOT change behavior unless configured
-- `-1` values = use Rust defaults
+### Key Notes
+
+- -1 = use vanilla behavior
+- Plugin only modifies behavior when configured
+- Default values now reflect a balanced custom setup
 
 ---
 
-## 🔧 Config Options
+## 🚁 Spawning System
 
-### Damage
-- Global damage multiplier (default 1.0)
+Disable vanilla events:
 
-### Gibs
-- Health (default 500)
-- Harvest delay (default 480 seconds)
+"Spawning - Disable Rust's default spawns": true
+"Spawning - Disable CH47 default spawns": true
 
-### Health
-- Base heli health (10000)
-- Main rotor (750)
-- Tail rotor (375)
+Controlled spawning:
 
-### Loot
-- Max crates (4)
-- Unlock timer (-1)
-- Custom loot toggle
+- Helicopter timer: 2–4 hours
+- CH47 timer: 2 hours
+- Max active patrol helis: 1
 
-### Misc
-- Shoot while dying (true)
-- Speed (25)
-- Startup speed/length
-- Lifetime (15 minutes)
-- Crate drop toggle on forced kill
-- Water to extinguish napalm
+✔ Patrol heli + CH47 can run at the same time  
+✔ No duplicate vanilla spawns  
 
-### Rockets
-- Blunt damage (175)
-- Explosion damage (100)
-- Radius (6)
-- Max rockets (12)
-- Fire delay (0.2s)
+---
 
-### Spawning
-- Auto spawn timers (heli + CH47)
-- Static spawning mode
-- Allow multiple active spawns
-- Disable heli / gibs / napalm
-- Disable vanilla spawns
-- Max active helicopters
-- Custom spawn points
+## 🔧 Default Tweaks (This Version)
 
-### Turrets
-- Accuracy (2)
-- Damage (20)
-- Range (300)
-- Burst timing + fire rate
+- Heli health: 6000
+- CH47 health: 4000
+- Reduced rocket damage
+- Napalm disabled
+- Crates unlock after 5 minutes
+- Reduced turret damage
+- Improved accuracy
+- Slower rocket firing
 
 ---
 
 ## 🔐 Permissions
 
-Grant:
-`oxide.grant group <group> <permission>`
+oxide.grant group <group> <permission>
 
-### Core
+Core:
+helicontrol.callheli
+helicontrol.callch47
+helicontrol.killheli
+helicontrol.killch47
+helicontrol.helispawn
+helicontrol.strafe
+helicontrol.update
+helicontrol.destination
+helicontrol.admin
 
-helicontrol.callheli  
-helicontrol.killheli  
-helicontrol.killgibs  
-helicontrol.killnapalm  
-helicontrol.helispawn  
-helicontrol.strafe  
-helicontrol.update  
-helicontrol.destination  
-helicontrol.admin  
-
-### Advanced
-
-helicontrol.dropcrates  
-helicontrol.ignorelimits  
-helicontrol.ignorecooldowns  
-helicontrol.callmultiple  
-helicontrol.callmultiplech47  
+Advanced:
+helicontrol.ignorecooldowns
+helicontrol.ignorelimits
+helicontrol.callmultiple
+helicontrol.callmultiplech47
+helicontrol.dropcrates
 
 ---
 
 ## ⏱ Cooldowns & Limits
 
-Permissions:
-- helicontrol.limit.X
-- helicontrol.cooldown.X
+helicontrol.limit.X
+helicontrol.cooldown.X
 
-Rules:
 - Limits reset daily
 - Cooldowns are time-based
-- Can be used independently
 
 ---
 
 ## 📦 Custom Loot
 
-File:
-`/oxide/data/HeliControlData.json`
-
-Example:
-
-```json
-{
-  "HeliInventoryLists": [
-    {
-      "lootBoxContents": [
-        { "name": "rifle.ak", "amount": 1 },
-        { "name": "ammo.rifle.hv", "amount": 128 }
-      ]
-    }
-  ]
-}
-```
+/oxide/data/HeliControlData.json
 
 ---
 
 ## 🔫 Weapon Scaling
 
-File:
-`/oxide/data/HeliControlWeapons.json`
-
-Example:
-
-```json
-{
-  "WeaponList": {
-    "Assault Rifle": 1.0,
-    "Bolt Action Rifle": 1.0
-  }
-}
-```
+/oxide/data/HeliControlWeapons.json
 
 ---
 
-## 🛠 Spawn System
+## 🛠 Custom Spawn Points
 
-Add:
-`/helispawn add name`
-
-Remove:
-`/helispawn remove name`
+/helispawn add name
+/helispawn remove name
 
 ---
 
 ## 🧪 Developer API
 
-```csharp
 var heli = HeliControl?.Call("callCoordinates", Vector3.Zero);
-```
-
----
-
-## 🧾 Default Config
-
-See full config in plugin — unchanged from vanilla by default.
 
 ---
 
 ## ⚠️ Notes
 
-- Always validate JSON: https://www.jsonlint.com/
-- Plugin does not change vanilla behavior unless configured
-- Test changes before using on live server
+- Test on staging before production
+- Disable vanilla spawns when using plugin spawning
+- Validate configs: https://www.jsonlint.com/
+
+---
+
+## 🧾 Version
+
+1.5.0 (Patched Build)
+
+- Stability improvements
+- Performance optimizations
+- Spawn system fixes
+- CH47 reliability improvements
+
+---
 
 ## Credit
 
-- ***https://umod.org/user/Shady***
+- Original plugin by ***Shady***
+- Patched version with improvement ***Milestorme*** 
