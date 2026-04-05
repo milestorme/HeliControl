@@ -43,6 +43,44 @@ namespace Oxide.Plugins
         }
 
         private CH47HelicopterAIController CH47Instance { get; set; }
+        private readonly Dictionary<ulong, CooldownInfo> _cooldownCache = new Dictionary<ulong, CooldownInfo>();
+        private const float CleanupIntervalSeconds = 15f;
+
+        private bool IsValidChinook(CH47HelicopterAIController chinook)
+        {
+            return chinook != null && !chinook.IsDestroyed && chinook.gameObject != null && !chinook.IsDead();
+        }
+
+        private void RefreshCH47Instance()
+        {
+            if (IsValidChinook(CH47Instance) && _chinooks.Contains(CH47Instance))
+                return;
+
+            CH47Instance = null;
+            foreach (var chinook in _chinooks)
+            {
+                if (!IsValidChinook(chinook))
+                    continue;
+
+                CH47Instance = chinook;
+                break;
+            }
+        }
+
+        private CH47HelicopterAIController GetSingleActiveChinook(bool requireSingle = true)
+        {
+            CheckHelicopter();
+            RefreshCH47Instance();
+
+            if (!IsValidChinook(CH47Instance))
+                return null;
+
+            if (requireSingle && CH47Count > 1)
+                return null;
+
+            return CH47Instance;
+        }
+
 
         private float _lastSpawnTimer;
         private float _lastSpawnTimerCH47;
@@ -244,7 +282,7 @@ namespace Oxide.Plugins
             TimeBeforeUnlocking = GetConfig("Loot - Time before unlocking crates", -1f);
             TimeBeforeUnlockingHack = GetConfig("Loot - Time before unlocking CH47 crates", -1f);
             LifeTimeMinutes = GetConfig("Misc - Maximum helicopter life time in minutes", 15);
-            LifeTimeMinutesCH47 = GetConfig("Misc - Maximum helicopter life time in minutes", 15);
+            LifeTimeMinutesCH47 = GetConfig("Misc - Maximum CH47 life time in minutes", 15);
             TimeBetweenRockets = GetConfig("Rockets - Time between each rocket in seconds", 0.2f);
             TurretFireRate = GetConfig("Turrets - Turret fire rate in seconds", 0.125f);
             TurretBurstLength = GetConfig("Turrets - Turret burst length in seconds", 3f);
@@ -334,6 +372,7 @@ namespace Oxide.Plugins
             Unsubscribe(nameof(OnEntitySpawned));
 
             _cooldownData = Interface.Oxide?.DataFileSystem?.ReadObject<StoredData3>("HeliControlCooldowns") ?? new StoredData3();
+            RebuildCooldownCache();
 
             if (!_configChanged) LoadDefaultConfig(); //don't call load again if it was already called because config file didn't exist. tiny optimization
 
@@ -342,7 +381,7 @@ namespace Oxide.Plugins
             LoadDefaultMessages();
 
 
-            string[] perms = { "callheli", "callheliself", "callhelitarget", "callch47", "callch47self", "callch47target", "killch47", "killheli", "strafe", "update", "destination", "dropcrate", "killnapalm", "killgibs", "unlockcrates", "admin", "ignorecooldown", "ignorelimits", "tpheli", "tpch47", "helispawn", "callmultiple", "callmultiplech47", "dropcrates", "nextheli" };
+            string[] perms = { "callheli", "callheliself", "callhelitarget", "callch47", "callch47self", "callch47target", "killch47", "killheli", "strafe", "update", "destination", "dropcrate", "killnapalm", "killgibs", "unlockcrates", "admin", "ignorecooldown", "ignorelimits", "tpheli", "tpch47", "helispawn", "callmultiple", "callmultiplech47", "dropcrates", "nextheli", "ch47destination" };
 
 
             for (int j = 0; j < perms.Length; j++) permission.RegisterPermission("helicontrol." + perms[j], this);
@@ -394,7 +433,7 @@ namespace Oxide.Plugins
                 _boundary = TerrainMeta.Size.x * 0.75f;
                 Subscribe(nameof(OnEntitySpawned));
 
-                if (ServerMgr.Instance != null) ServerMgr.Instance.InvokeRepeating(CheckHelicopter, 10f, 10f); //ServerMgr.Instance should never be null after server init, but we check anyway
+                if (ServerMgr.Instance != null) ServerMgr.Instance.InvokeRepeating(CheckHelicopter, CleanupIntervalSeconds, CleanupIntervalSeconds); //ServerMgr.Instance should never be null after server init, but we check anyway
 
                 foreach (var entity in BaseNetworkable.serverEntities)
                 {
@@ -435,11 +474,7 @@ namespace Oxide.Plugins
 
 
 
-                foreach (var ch47 in _chinooks)
-                {
-                    CH47Instance = ch47; //I feel like this is better than LINQ's FirstOrDefault for a hashset. maybe hashsets shouldn't have been used at all. who knows
-                    break;
-                }
+                RefreshCH47Instance();
 
 
                 var randomHeliSpawnTime = GetRandomSpawnTime();
@@ -499,229 +534,288 @@ namespace Oxide.Plugins
 
         private void OnEntitySpawned(BaseNetworkable entity)
         {
-            if (entity == null || entity.IsDestroyed || entity.gameObject == null) return; //entity should never be destroyed on spawn, but lets do a check anyway
-            var prefabname = entity?.ShortPrefabName ?? string.Empty;
-            var longprefabname = entity?.PrefabName ?? string.Empty;
-            if (string.IsNullOrEmpty(prefabname) || string.IsNullOrEmpty(longprefabname)) return; //another likely impossibility, but lets just check EVERYTHING
+            if (entity == null || entity.IsDestroyed || entity.gameObject == null)
+                return;
 
-
-
-            var ownerID = (entity as BaseEntity)?.OwnerID ?? 0;
+            var baseEntity = entity as BaseEntity;
+            var prefabId = entity.prefabID;
 
             var lockedEntCrate = entity as LockedByEntCrate;
-            if (lockedEntCrate != null) _lockedCrates.Add(lockedEntCrate);
+            if (lockedEntCrate != null)
+                _lockedCrates.Add(lockedEntCrate);
 
             var hackableCrate = entity as HackableLockedCrate;
-            if (hackableCrate != null) _hackLockedCrates.Add(hackableCrate);
+            if (hackableCrate != null)
+                _hackLockedCrates.Add(hackableCrate);
 
-            var ch = entity as CH47HelicopterAIController;
-            if (ch?.prefabID == CHINOOK_SCIENTISTS_PREFAB_ID && !ch.ShouldLand()) //ShouldLand will be true for oil rig chinooks. we want to ignore those; we don't control them
-            {
-                ch.Invoke(() =>
-                {
-                    if (!ch.IsDestroyed) ch.Kill();
-                }, LifeTimeMinutesCH47 * 60);
-
-                _chinooks.Add(ch);
-                CH47Instance = ch;
-
-                if (UseOldSpawningCH47) CallTimerCH47 = GetChinookSpawnTimer(GetRandomSpawnTime(true));
-
-                UpdateChinook(ch, true);
-            }
+            var ch47 = entity as CH47HelicopterAIController;
+            if (ch47 != null)
+                HandleSpawnedCH47(ch47);
 
             var fireBall = entity as FireBall;
-            if (fireBall != null && (fireBall.prefabID == NAPALM_FIREBALL_PREFAB_ID || fireBall.prefabID == OIL_FIREBALL_PREFAB_ID)) _fireBalls.Add(fireBall);
+            if (fireBall != null && IsTrackedFireBall(fireBall.prefabID))
+                _fireBalls.Add(fireBall);
 
-            if (entity.prefabID == ROCKET_PREFAB_ID || entity.prefabID == NAPALM_ROCKET_PREFAB_ID || entity.prefabID == AIRBURST_ROCKET_PREFAB_ID)
-            {
-                var explosion = entity as TimedExplosive;
-                if (explosion == null || explosion.IsDestroyed || explosion.gameObject == null) return; //super ultra extra safe null checking
+            if (prefabId == ROCKET_PREFAB_ID || prefabId == NAPALM_ROCKET_PREFAB_ID || prefabId == AIRBURST_ROCKET_PREFAB_ID)
+                HandleSpawnedRocket(entity as TimedExplosive, baseEntity != null ? baseEntity.OwnerID : 0UL);
 
-
-                _useNapalm = explosion.prefabID == NAPALM_ROCKET_PREFAB_ID && explosion.OwnerID != 1337; //is a napalm rocket & was not spawned by plugin (1337 owner id indicates that)
-
-
-                if (MaxHeliRockets < 1) explosion.Kill();
-                else
-                {
-                    explosion.explosionRadius = RocketExplosionRadius;
-                    if (MaxHeliRockets > 12 && ownerID == 0)
-                    {
-                        PatrolHelicopter strafeHeli = null;
-                        foreach (var heli in _PatrolHelicopters) //loop through all active helis to find one that's currently strafing
-                        {
-                            if (heli == null || heli.IsDestroyed || heli.gameObject == null || heli.IsDead()) continue; //super ultra extra safe null checking
-                            var state = heli?.GetComponent<PatrolHelicopterAI>()?._currentState ?? PatrolHelicopterAI.aiState.IDLE;
-                            if (state == PatrolHelicopterAI.aiState.STRAFE)
-                            {
-                                strafeHeli = heli;
-                                break;
-                            }
-                        }
-
-                        if (strafeHeli == null || strafeHeli.IsDestroyed || strafeHeli.gameObject == null || strafeHeli.IsDead()) return; //super ultra extra safe null checking
-                        var curCount = 0;
-                        if (!_strafeCount.TryGetValue(strafeHeli, out curCount)) curCount = _strafeCount[strafeHeli] = 1;
-                        else curCount = _strafeCount[strafeHeli] += 1;
-                        if (curCount >= 12)
-                        {
-                            var heliAI = strafeHeli?.GetComponent<PatrolHelicopterAI>() ?? null;
-                            if (heliAI == null || heliAI.gameObject == null) return; //extra null checking
-                            var actCount = 0;
-                            Action fireAct = null;
-                            fireAct = new Action(() =>
-                            {
-                                if (heliAI == null || heliAI.gameObject == null || actCount >= (MaxHeliRockets - 12))
-                                {
-                                    InvokeHandler.CancelInvoke(heliAI, fireAct);
-                                    return;
-                                }
-                                actCount++;
-                                FireRocket(heliAI);
-                            });
-                            InvokeHandler.InvokeRepeating(heliAI, fireAct, TimeBetweenRockets, TimeBetweenRockets);
-                            _strafeCount[strafeHeli] = 0;
-                        }
-                    }
-                    else if (MaxHeliRockets < 12 && HeliInstance != null && HeliInstance.gameObject != null && HeliInstance.ClipRocketsLeft() > MaxHeliRockets)
-                    {
-                        explosion.Kill();
-                        return;
-                    }
-
-
-                    var dmgTypes = explosion?.damageTypes ?? null;
-
-                    if (dmgTypes != null && dmgTypes.Count > 0)
-                    {
-                        for (int i = 0; i < dmgTypes.Count; i++)
-                        {
-                            var dmg = dmgTypes[i];
-                            if (dmg == null) continue; //impossible? who knows. but we're gonna null check it anyway cause that's what you do
-                            if (dmg.type == Rust.DamageType.Blunt) dmg.amount = RocketDamageBlunt;
-                            if (dmg.type == Rust.DamageType.Explosion) dmg.amount = RocketDamageExplosion;
-                        }
-                    }
-                }
-            }
-
-            if (entity.prefabID == HELI_CRATE_PREFAB_ID)
-            {
-                if (UseCustomLoot && _lootData?.HeliInventoryLists != null && _lootData.HeliInventoryLists.Count > 0)
-                {
-                    var heli_crate = entity as LootContainer;
-                    if (heli_crate == null || heli_crate?.inventory == null) return; //possible that the inventory is somehow null? not sure
-
-                    var index = _rng.Next(_lootData.HeliInventoryLists.Count);
-                    var inv = _lootData.HeliInventoryLists[index];
-                    if (inv?.lootBoxContents != null && inv.lootBoxContents.Count > 0)
-                    {
-                        if (heli_crate?.inventory?.itemList != null && heli_crate.inventory.itemList.Count > 0)
-                        {
-                            var itemList = new List<Item>(heli_crate.inventory.itemList);
-                            if (itemList != null && itemList.Count > 0) for (int i = 0; i < itemList.Count; i++) RemoveFromWorld(itemList[i]); //completely remove all existing items in crate
-                        }
-
-                        for (int i = 0; i < inv.lootBoxContents.Count; i++)
-                        {
-                            var itemDef = inv.lootBoxContents[i];
-                            if (itemDef == null) continue;
-
-                            var amount = (itemDef.amountMin > 0 && itemDef.amountMax > 0) ? UnityEngine.Random.Range(itemDef.amountMin, itemDef.amountMax) : itemDef.amount;
-
-                            var def = ItemManager.FindItemDefinition(itemDef.name);
-                            if (def != null)
-                            {
-                                var item = ItemManager.Create(def, amount, itemDef.skinID);
-                                if (item != null && !item.MoveToContainer(heli_crate.inventory)) RemoveFromWorld(item); //ensure the item is completely removed if we can't move it, so we're not causing issues
-                            }
-                        }
-
-                        heli_crate.inventory.MarkDirty();
-                    }
-                }
-
-                if (TimeBeforeUnlocking >= 0f)
-                {
-                    var crate2 = entity as LockedByEntCrate;
-                    if (crate2 != null)
-                    {
-                        if (TimeBeforeUnlocking <= 0f) UnlockCrate(crate2);
-                        else crate2.Invoke(() =>
-                        {
-                            if (entity == null || entity.IsDestroyed || crate2 == null) return;
-                            UnlockCrate(crate2);
-                        }, TimeBeforeUnlocking);
-                    }
-                }
-            }
+            if (prefabId == HELI_CRATE_PREFAB_ID)
+                HandleSpawnedHeliCrate(lockedEntCrate, entity as LootContainer);
 
             var debris = entity as HelicopterDebris;
             if (debris != null)
+                HandleSpawnedDebris(debris);
+
+            var patrolHeli = entity as PatrolHelicopter;
+            if (patrolHeli != null)
+                HandleSpawnedPatrolHeli(patrolHeli);
+        }
+
+        private bool IsTrackedFireBall(uint prefabId)
+        {
+            return prefabId == NAPALM_FIREBALL_PREFAB_ID || prefabId == OIL_FIREBALL_PREFAB_ID;
+        }
+
+        private void HandleSpawnedCH47(CH47HelicopterAIController ch47)
+        {
+            if (ch47.prefabID != CHINOOK_SCIENTISTS_PREFAB_ID || ch47.ShouldLand())
+                return;
+
+            ch47.Invoke(() =>
             {
-                if (DisableGibs || GibsHealth <= 0)
-                {
-                    NextTick(() => { if (!(entity?.IsDestroyed ?? true)) entity.Kill(); });
-                    return;
-                }
+                if (!ch47.IsDestroyed)
+                    ch47.Kill();
+            }, LifeTimeMinutesCH47 * 60f);
 
-                if (GibsHealth != 500f)
-                {
-                    debris.InitializeHealth(GibsHealth, GibsHealth);
-                    debris.SendNetworkUpdate();
-                }
+            _chinooks.Add(ch47);
+            RefreshCH47Instance();
 
-                _gibs.Add(debris);
-                if (GibsTooHotLength != 480f) debris.tooHotUntil = Time.realtimeSinceStartup + GibsTooHotLength;
+            if (UseOldSpawningCH47)
+                CallTimerCH47 = GetChinookSpawnTimer(GetRandomSpawnTime(true));
+
+            UpdateChinook(ch47, true);
+        }
+
+        private void HandleSpawnedRocket(TimedExplosive explosion, ulong ownerId)
+        {
+            if (explosion == null || explosion.IsDestroyed || explosion.gameObject == null)
+                return;
+
+            _useNapalm = explosion.prefabID == NAPALM_ROCKET_PREFAB_ID && explosion.OwnerID != 1337;
+
+            if (MaxHeliRockets < 1)
+            {
+                explosion.Kill();
+                return;
             }
 
-            var BaseHeli = entity as PatrolHelicopter;
-            if (BaseHeli != null)
+            explosion.explosionRadius = RocketExplosionRadius;
+
+            if (MaxHeliRockets > 12 && ownerId == 0UL)
             {
-                var isMax = HeliCount >= MaxActiveHelicopters && MaxActiveHelicopters != -1;
-                if (DisableHeli || isMax)
+                var strafeHeli = FindActiveStrafingHeli();
+                if (strafeHeli != null)
+                    QueueExtraRockets(strafeHeli);
+            }
+            else if (MaxHeliRockets < 12 && HeliInstance != null && HeliInstance.gameObject != null && HeliInstance.ClipRocketsLeft() > MaxHeliRockets)
+            {
+                explosion.Kill();
+                return;
+            }
+
+            var dmgTypes = explosion.damageTypes;
+            if (dmgTypes == null || dmgTypes.Count <= 0)
+                return;
+
+            for (int i = 0; i < dmgTypes.Count; i++)
+            {
+                var dmg = dmgTypes[i];
+                if (dmg == null)
+                    continue;
+
+                if (dmg.type == Rust.DamageType.Blunt)
+                    dmg.amount = RocketDamageBlunt;
+                else if (dmg.type == Rust.DamageType.Explosion)
+                    dmg.amount = RocketDamageExplosion;
+            }
+        }
+
+        private PatrolHelicopter FindActiveStrafingHeli()
+        {
+            foreach (var heli in _PatrolHelicopters)
+            {
+                if (heli == null || heli.IsDestroyed || heli.gameObject == null || heli.IsDead())
+                    continue;
+
+                var heliAI = heli.GetComponent<PatrolHelicopterAI>();
+                if (heliAI != null && heliAI._currentState == PatrolHelicopterAI.aiState.STRAFE)
+                    return heli;
+            }
+
+            return null;
+        }
+
+        private void QueueExtraRockets(PatrolHelicopter strafeHeli)
+        {
+            if (strafeHeli == null || strafeHeli.IsDestroyed || strafeHeli.gameObject == null || strafeHeli.IsDead())
+                return;
+
+            int curCount;
+            if (!_strafeCount.TryGetValue(strafeHeli, out curCount))
+                curCount = _strafeCount[strafeHeli] = 1;
+            else
+                curCount = _strafeCount[strafeHeli] += 1;
+
+            if (curCount < 12)
+                return;
+
+            var heliAI = strafeHeli.GetComponent<PatrolHelicopterAI>();
+            if (heliAI == null || heliAI.gameObject == null)
+                return;
+
+            var actCount = 0;
+            Action fireAct = null;
+            fireAct = new Action(() =>
+            {
+                if (heliAI == null || heliAI.gameObject == null || actCount >= (MaxHeliRockets - 12))
                 {
-                    NextTick(() => { if (!(entity?.IsDestroyed ?? true)) entity.Kill(); });
-                }
-                if (DisableHeli)
-                {
-                    Puts(GetMessage("heliAutoDestroyed"));
+                    InvokeHandler.CancelInvoke(heliAI, fireAct);
                     return;
                 }
-                else if (isMax)
+
+                actCount++;
+                FireRocket(heliAI);
+            });
+
+            InvokeHandler.InvokeRepeating(heliAI, fireAct, TimeBetweenRockets, TimeBetweenRockets);
+            _strafeCount[strafeHeli] = 0;
+        }
+
+        private void HandleSpawnedHeliCrate(LockedByEntCrate lockedCrate, LootContainer lootContainer)
+        {
+            if (UseCustomLoot && lootContainer != null && lootContainer.inventory != null && _lootData?.HeliInventoryLists != null && _lootData.HeliInventoryLists.Count > 0)
+            {
+                var index = _rng.Next(_lootData.HeliInventoryLists.Count);
+                var inv = _lootData.HeliInventoryLists[index];
+                if (inv?.lootBoxContents != null && inv.lootBoxContents.Count > 0)
                 {
-                    Puts(GetMessage("maxHelis"));
-                    return;
-                }
-
-                var AIHeli = entity?.GetComponent<PatrolHelicopterAI>() ?? null;
-                if (AIHeli == null) return;
-
-                if (UseOldSpawning) CallTimer = GetHeliSpawnTimer(GetRandomSpawnTime());
-
-
-                _PatrolHelicopters.Add(BaseHeli);
-                UpdateHeli(BaseHeli, true);
-
-                if (UseCustomHeliSpawns && _spawnsData?.HelicopterSpawns != null && _spawnsData.HelicopterSpawns.Count > 0 && !_forceCalled.Contains(BaseHeli))
-                {
-                    var valCount = _spawnsData.HelicopterSpawns.Count;
-                    var rng = UnityEngine.Random.Range(0, valCount);
-                    var pos = _spawnsData.HelicopterSpawns[rng].Position;
-                    BaseHeli.transform.position = pos;
-                    AIHeli.transform.position = pos;
-                }
-
-                if (HeliStartLength > 0.0f && HeliStartSpeed != HeliSpeed)
-                {
-                    AIHeli.maxSpeed = HeliStartSpeed;
-                    AIHeli.Invoke(() =>
+                    var existingItems = lootContainer.inventory.itemList;
+                    if (existingItems != null && existingItems.Count > 0)
                     {
-                        if (AIHeli == null || AIHeli.gameObject == null || BaseHeli == null || BaseHeli.IsDestroyed || BaseHeli.gameObject == null || BaseHeli.IsDead()) return;
-                        AIHeli.maxSpeed = HeliSpeed;
-                    }, HeliStartLength);
+                        var itemList = new List<Item>(existingItems);
+                        for (int i = 0; i < itemList.Count; i++)
+                            RemoveFromWorld(itemList[i]);
+                    }
+
+                    for (int i = 0; i < inv.lootBoxContents.Count; i++)
+                    {
+                        var itemDef = inv.lootBoxContents[i];
+                        if (itemDef == null)
+                            continue;
+
+                        var amount = (itemDef.amountMin > 0 && itemDef.amountMax > 0)
+                            ? UnityEngine.Random.Range(itemDef.amountMin, itemDef.amountMax)
+                            : itemDef.amount;
+
+                        var def = ItemManager.FindItemDefinition(itemDef.name);
+                        if (def == null)
+                            continue;
+
+                        var item = ItemManager.Create(def, amount, itemDef.skinID);
+                        if (item != null && !item.MoveToContainer(lootContainer.inventory))
+                            RemoveFromWorld(item);
+                    }
+
+                    lootContainer.inventory.MarkDirty();
                 }
+            }
+
+            if (TimeBeforeUnlocking < 0f || lockedCrate == null)
+                return;
+
+            if (TimeBeforeUnlocking <= 0f)
+            {
+                UnlockCrate(lockedCrate);
+                return;
+            }
+
+            lockedCrate.Invoke(() =>
+            {
+                if (!lockedCrate.IsDestroyed)
+                    UnlockCrate(lockedCrate);
+            }, TimeBeforeUnlocking);
+        }
+
+        private void HandleSpawnedDebris(HelicopterDebris debris)
+        {
+            if (DisableGibs || GibsHealth <= 0f)
+            {
+                NextTick(() =>
+                {
+                    if (debris != null && !debris.IsDestroyed)
+                        debris.Kill();
+                });
+                return;
+            }
+
+            if (GibsHealth != 500f)
+            {
+                debris.InitializeHealth(GibsHealth, GibsHealth);
+                debris.SendNetworkUpdate();
+            }
+
+            _gibs.Add(debris);
+            if (GibsTooHotLength != 480f)
+                debris.tooHotUntil = Time.realtimeSinceStartup + GibsTooHotLength;
+        }
+
+        private void HandleSpawnedPatrolHeli(PatrolHelicopter baseHeli)
+        {
+            var isMax = MaxActiveHelicopters != -1 && HeliCount >= MaxActiveHelicopters;
+            if (DisableHeli || isMax)
+            {
+                NextTick(() =>
+                {
+                    if (baseHeli != null && !baseHeli.IsDestroyed)
+                        baseHeli.Kill();
+                });
+
+                if (DisableHeli)
+                    Puts(GetMessage("heliAutoDestroyed"));
+                else
+                    Puts(GetMessage("maxHelis"));
+
+                return;
+            }
+
+            var heliAI = baseHeli.GetComponent<PatrolHelicopterAI>();
+            if (heliAI == null)
+                return;
+
+            if (UseOldSpawning)
+                CallTimer = GetHeliSpawnTimer(GetRandomSpawnTime());
+
+            _PatrolHelicopters.Add(baseHeli);
+            UpdateHeli(baseHeli, true);
+
+            if (UseCustomHeliSpawns && _spawnsData?.HelicopterSpawns != null && _spawnsData.HelicopterSpawns.Count > 0 && !_forceCalled.Contains(baseHeli))
+            {
+                var rng = UnityEngine.Random.Range(0, _spawnsData.HelicopterSpawns.Count);
+                var pos = _spawnsData.HelicopterSpawns[rng].Position;
+                baseHeli.transform.position = pos;
+                heliAI.transform.position = pos;
+            }
+
+            if (HeliStartLength > 0f && HeliStartSpeed != HeliSpeed)
+            {
+                heliAI.maxSpeed = HeliStartSpeed;
+                heliAI.Invoke(() =>
+                {
+                    if (heliAI == null || heliAI.gameObject == null || baseHeli == null || baseHeli.IsDestroyed || baseHeli.gameObject == null || baseHeli.IsDead())
+                        return;
+
+                    heliAI.maxSpeed = HeliSpeed;
+                }, HeliStartLength);
             }
         }
 
@@ -792,14 +886,20 @@ namespace Oxide.Plugins
 
             if (CH47?.prefabID == CHINOOK_SCIENTISTS_PREFAB_ID && !CH47.ShouldLand()) //ShouldLand will be true for oil rig chinooks. we want to ignore those; we don't control them
             {
+                var wasTimerChinook = CH47 == _timerCH47;
+
                 _chinooks.Remove(CH47);
                 _forceCalledCh.Remove(CH47);
+                if (wasTimerChinook) _timerCH47 = null;
+                if (CH47 == CH47Instance) CH47Instance = null;
 
-                if (!UseOldSpawningCH47 && (CallTimerCH47 == null || CallTimerCH47.Destroyed) && CH47 == _timerCH47)
+                if (!UseOldSpawningCH47 && (CallTimerCH47 == null || CallTimerCH47.Destroyed) && wasTimerChinook)
                 {
                     var rngTime = GetRandomSpawnTime(true);
                     if (rngTime > 0) CallTimerCH47 = GetChinookSpawnTimer(rngTime);
                 } //otherwise, a timer is already firing (or heli is not a timer heli or old spawning is enabled)
+
+                RefreshCH47Instance();
             }
 
 
@@ -952,34 +1052,82 @@ namespace Oxide.Plugins
         //chinook position setting code is based off of the same code used by patrolhelicopter in order to (try to) get it to spawn out of the map and fly in
         private CH47HelicopterAIController callChinook(Vector3 coordinates = new Vector3(), bool forced = true)
         {
-            var heli = (CH47HelicopterAIController)GameManager.server.CreateEntity(CHINOOK_PREFAB, new Vector3(0, 100, 0), new Quaternion(), true);
+            var heli = (CH47HelicopterAIController)GameManager.server.CreateEntity(CHINOOK_PREFAB, new Vector3(0f, 100f, 0f), Quaternion.identity, true);
             if (heli == null) return null;
-            float x = TerrainMeta.Size.x;
-            float num = coordinates.y + 50f;
-            var mapScaleDistance = 0.8f; //high scale for further out distances/positions
-            var vector3_1 = Vector3Ex.Range(-1f, 1f);
-            vector3_1.y = 0.0f;
-            vector3_1.Normalize();
-            var vector3_2 = vector3_1 * (x * mapScaleDistance);
-            vector3_2.y = num;
-            heli.transform.position = vector3_2;
-            if (forced) _forceCalledCh.Add(heli);
-            heli.Spawn();
-            if (coordinates != Vector3.zero)
+
+            var mapSize = TerrainMeta.Size.x;
+            var hasTarget = coordinates != Vector3.zero;
+            var targetPosition = hasTarget ? coordinates : Vector3.zero;
+            if (hasTarget)
             {
-                heli.Invoke(() =>
-                {
-                    if (heli != null && !heli.IsDestroyed) SetDestination(heli, coordinates + new Vector3(0f, 10f, 0)); //worth noting that null checks inside of invokes are probably unnecessary, because the invoke should never happen if the object turned null... but we check anyway.
-                }, 1f);
+                var targetGround = GetGround(targetPosition);
+                targetPosition.y = Mathf.Max(targetPosition.y, targetGround.y + 30f, 60f);
             }
+
+            var mapScaleDistance = 0.8f;
+            var spawnDirection = Vector3Ex.Range(-1f, 1f);
+            spawnDirection.y = 0f;
+            if (spawnDirection == Vector3.zero) spawnDirection = Vector3.forward;
+            spawnDirection.Normalize();
+
+            var spawnPosition = spawnDirection * (mapSize * mapScaleDistance);
+            spawnPosition.y = hasTarget ? Mathf.Max(targetPosition.y + 40f, 100f) : 100f;
+
+            heli.transform.position = spawnPosition;
+            if (forced) _forceCalledCh.Add(heli);
+
+            heli.Spawn();
+
+            if (hasTarget)
+                QueueChinookDestination(heli, targetPosition);
+
             return heli;
         }
 
+        private void QueueChinookDestination(CH47HelicopterAIController heli, Vector3 target, int maxAttempts = 8, float repeatDelay = 0.5f)
+        {
+            if (!IsValidChinook(heli) || target == Vector3.zero || maxAttempts < 1)
+                return;
+
+            var attempts = 0;
+            Timer destinationTimer = null;
+
+            destinationTimer = timer.Every(repeatDelay, () =>
+            {
+                if (!IsValidChinook(heli))
+                {
+                    destinationTimer?.Destroy();
+                    return;
+                }
+
+                attempts++;
+                SetDestination(heli, target);
+
+                if (attempts >= maxAttempts)
+                    destinationTimer?.Destroy();
+            });
+
+            timer.Once(0.1f, () =>
+            {
+                if (!IsValidChinook(heli))
+                    return;
+
+                SetDestination(heli, target);
+            });
+        }
+
+
         private List<PatrolHelicopter> callHelis(int amount, Vector3 coordinates = new Vector3(), bool forced = true, bool setPositionAfterSpawn = true)
         {
-            if (amount < 1) return null;
+            if (amount < 1) return new List<PatrolHelicopter>();
+
             var listHelis = new List<PatrolHelicopter>(amount);
-            for (int i = 0; i < amount; i++) listHelis.Add(callHeli(coordinates, forced, setPositionAfterSpawn));
+            for (int i = 0; i < amount; i++)
+            {
+                var heli = callHeli(coordinates, forced, setPositionAfterSpawn);
+                if (heli != null) listHelis.Add(heli);
+            }
+
             return listHelis;
         }
 
@@ -1056,16 +1204,17 @@ namespace Oxide.Plugins
             for (int i = 0; i < chinooks.Count; i++)
             {
                 var ch47 = chinooks[i];
-                if (ch47 != null && !ch47.IsDestroyed)
-                {
-                    if (isForced) ch47.Kill(); //network kill if forced, else die 'naturally' with explosion
-                    else DieInstantly(ch47);
+                if (!IsValidChinook(ch47))
+                    continue;
 
-                    count++;
-                }
+                if (isForced) ch47.Kill();
+                else DieInstantly(ch47);
+
+                count++;
             }
 
             CheckHelicopter();
+            RefreshCH47Instance();
             return count;
         }
         #endregion
@@ -1167,7 +1316,7 @@ namespace Oxide.Plugins
             
             if (nextCh47 <= TimeSpan.Zero) player.Message(GetMessage("noTimeFoundCH47", player.Id));
             else 
-                player.Message(string.Format(GetMessage("nextCH47Spawn", player.Id), CH47Instance != null && !CH47Instance.IsDestroyed ? GetMessage("nextAlreadyActive", player.Id) : ReadableTimeSpan(nextCh47)));
+                player.Message(string.Format(GetMessage("nextCH47Spawn", player.Id), GetSingleActiveChinook(false) != null ? GetMessage("nextAlreadyActive", player.Id) : ReadableTimeSpan(nextCh47)));
         }
 
         private void cmdDropCH47Crate(IPlayer player, string command, string[] args)
@@ -1177,27 +1326,43 @@ namespace Oxide.Plugins
                 SendNoPerms(player);
                 return;
             }
-            if (CH47Instance == null || CH47Instance.IsDestroyed || CH47Instance.IsDead())
-            {
-                player.Message(GetMessage("noHelisFound", player.Id));
-                return;
-            }
+
+            CheckHelicopter();
+
             var all = args.Length > 0 && args[0].Equals("all", StringComparison.OrdinalIgnoreCase);
-            if (CH47Count > 1 && !all)
+            var targetChinook = GetSingleActiveChinook(!all);
+
+            if (!all && targetChinook == null)
             {
-                player.Message(string.Format(GetMessage("cannotBeCalled", player.Id), HeliCount.ToString("N0")));
+                player.Message(CH47Count > 1
+                    ? string.Format(GetMessage("cannotBeCalled", player.Id), CH47Count.ToString("N0"))
+                    : GetMessage("noHelisFound", player.Id));
                 return;
             }
-            if (all) foreach (var ch47 in _chinooks) { if (ch47.CanDropCrate()) ch47.DropCrate(); }
-            else
+
+            if (all)
             {
-                if (!CH47Instance.CanDropCrate())
+                var droppedAny = false;
+                foreach (var ch47 in _chinooks)
                 {
-                    player.Message(GetMessage("ch47AlreadyDropped", player.Id));
-                    return;
+                    if (!IsValidChinook(ch47) || !ch47.CanDropCrate())
+                        continue;
+
+                    ch47.DropCrate();
+                    droppedAny = true;
                 }
-                CH47Instance.DropCrate();
+
+                player.Message(droppedAny ? GetMessage("ch47DroppedCrate", player.Id) : GetMessage("ch47AlreadyDropped", player.Id));
+                return;
             }
+
+            if (!targetChinook.CanDropCrate())
+            {
+                player.Message(GetMessage("ch47AlreadyDropped", player.Id));
+                return;
+            }
+
+            targetChinook.DropCrate();
             player.Message(GetMessage("ch47DroppedCrate", player.Id));
         }
 
@@ -1237,17 +1402,17 @@ namespace Oxide.Plugins
                     SendNoPerms(player);
                     return;
                 }
-                if (CH47Instance == null || CH47Instance?.transform == null)
+
+                var targetChinook = GetSingleActiveChinook();
+                if (targetChinook == null || targetChinook.transform == null)
                 {
-                    player.Message(GetMessage("noHelisFound", player.Id));
+                    player.Message(CH47Count > 1
+                        ? string.Format(GetMessage("cannotBeCalled", player.Id), CH47Count.ToString("N0"))
+                        : GetMessage("noHelisFound", player.Id));
                     return;
                 }
-                if (HeliCount > 1)
-                {
-                    player.Message(string.Format(GetMessage("cannotBeCalled", player.Id), HeliCount.ToString("N0")));
-                    return;
-                }
-                tpPos = CH47Instance.transform.position;
+
+                tpPos = targetChinook.transform.position;
             }
 
             if (tpPos == Vector3.zero)
@@ -1269,12 +1434,7 @@ namespace Oxide.Plugins
             var limit = GetHighestLimit(player, ch47);
             var now = DateTime.Now;
             var today = now.ToString("d");
-            var cdd = GetCooldownInfo(player.userID);
-            if (cdd == null)
-            {
-                cdd = new CooldownInfo(player);
-                if (_cooldownData?.cooldownList != null) _cooldownData.cooldownList.Add(cdd);
-            }
+            var cdd = GetOrCreateCooldownInfo(player);
             var timesCalled = ch47 ? cdd.TimesCalledCH47 : cdd.TimesCalled;
             var lastCall = ch47 ? cdd.LastCallDayCH47 : cdd.LastCallDay;
             var coolTime = ch47 ? cdd.CooldownTimeCH47 : cdd.CooldownTime;
@@ -1326,12 +1486,7 @@ namespace Oxide.Plugins
                 }
 
                 var now = DateTime.Now;
-                var cdd = GetCooldownInfo(player.userID);
-                if (cdd == null)
-                {
-                    cdd = new CooldownInfo(player);
-                    _cooldownData.cooldownList.Add(cdd);
-                }
+                var cdd = GetOrCreateCooldownInfo(player);
 
                 if (args.Length == 0)
                 {
@@ -1395,12 +1550,7 @@ namespace Oxide.Plugins
                 return;
             }
             var now = DateTime.Now;
-            var cdd = GetCooldownInfo(player.userID);
-            if (cdd == null)
-            {
-                cdd = new CooldownInfo(player);
-                _cooldownData.cooldownList.Add(cdd);
-            }
+            var cdd = GetOrCreateCooldownInfo(player);
 
             if (args.Length < 1)
             {
@@ -1612,7 +1762,7 @@ namespace Oxide.Plugins
             else
             {
                 if (!isCh47) SetDestination(HeliInstance, targPos);
-                else SetDestination(CH47Instance, targPos);
+                else SetDestination(GetSingleActiveChinook(), targPos);
             }
             player.Message(string.Format(GetMessage("destinationOtherPosition", player.Id), target.displayName));
         }
@@ -1950,11 +2100,19 @@ namespace Oxide.Plugins
 
         private void SetDestination(CH47HelicopterAIController heli, Vector3 target)
         {
-            if (heli == null || heli.IsDestroyed || heli.gameObject == null || heli.IsDead() || target == Vector3.zero) return;
+            if (!IsValidChinook(heli) || target == Vector3.zero) return;
+
+            var groundedTarget = GetGround(target);
+            target.y = Mathf.Max(target.y, groundedTarget.y + 30f, 60f);
+
             heli.SetMoveTarget(target);
 
-            var brain = heli?.GetComponent<CH47AIBrain>() ?? null;
-            if (brain != null) brain.mainInterestPoint = target;
+            var brain = heli.GetComponent<CH47AIBrain>();
+            if (brain != null)
+                brain.mainInterestPoint = target;
+
+            heli.transform.hasChanged = true;
+            heli.SendNetworkUpdateImmediate();
         }
 
         private void ToggleCH47Event(bool value)
@@ -1994,13 +2152,20 @@ namespace Oxide.Plugins
                 {
                     _checkHelicopter = new Action(() =>
                     {
-                        _PatrolHelicopters.RemoveWhere(p => p?.IsDestroyed ?? true);
-                        _chinooks.RemoveWhere(p => p?.IsDestroyed ?? true);
+                        _PatrolHelicopters.RemoveWhere(p => p == null || p.IsDestroyed || p.IsDead());
+                        _chinooks.RemoveWhere(p => p == null || p.IsDestroyed || p.gameObject == null || p.IsDead());
                         _gibs.RemoveWhere(p => p?.IsDestroyed ?? true);
                         _fireBalls.RemoveWhere(p => p?.IsDestroyed ?? true);
-                        _forceCalled.RemoveWhere(p => p?.IsDestroyed ?? true);
-                        _forceCalledCh.RemoveWhere(p => p?.IsDestroyed ?? true);
+                        _forceCalled.RemoveWhere(p => p == null || p.IsDestroyed || p.IsDead());
+                        _forceCalledCh.RemoveWhere(p => p == null || p.IsDestroyed || p.gameObject == null || p.IsDead());
                         _lockedCrates.RemoveWhere(p => p?.IsDestroyed ?? true);
+                        _hackLockedCrates.RemoveWhere(p => p?.IsDestroyed ?? true);
+
+                        if (!IsValidChinook(CH47Instance) || !_chinooks.Contains(CH47Instance))
+                            RefreshCH47Instance();
+
+                        if (_timerCH47 != null && !IsValidChinook(_timerCH47))
+                            _timerCH47 = null;
                     });
                 }
 
@@ -2037,17 +2202,50 @@ namespace Oxide.Plugins
 
         private int CH47Count { get { return _chinooks?.Count ?? 0; } }
 
-        private CooldownInfo GetCooldownInfo(ulong userId) //iterating here isn't optimal for performance, but it's old code
+        private void RebuildCooldownCache()
         {
-            if (_cooldownData?.cooldownList != null)
+            _cooldownCache.Clear();
+
+            if (_cooldownData == null)
+                _cooldownData = new StoredData3();
+
+            if (_cooldownData.cooldownList == null)
+                _cooldownData.cooldownList = new List<CooldownInfo>();
+
+            for (int i = 0; i < _cooldownData.cooldownList.Count; i++)
             {
-                for (int i = 0; i < _cooldownData.cooldownList.Count; i++)
-                {
-                    var cd = _cooldownData.cooldownList[i];
-                    if (cd?.UserID == userId) return cd;
-                }
+                var info = _cooldownData.cooldownList[i];
+                if (info == null || info.UserID == 0UL)
+                    continue;
+
+                _cooldownCache[info.UserID] = info;
             }
-            return null;
+        }
+
+        private CooldownInfo GetCooldownInfo(ulong userId)
+        {
+            CooldownInfo info;
+            return _cooldownCache.TryGetValue(userId, out info) ? info : null;
+        }
+
+        private CooldownInfo GetOrCreateCooldownInfo(BasePlayer player)
+        {
+            if (player == null)
+                return null;
+
+            var existing = GetCooldownInfo(player.userID);
+            if (existing != null)
+                return existing;
+
+            var created = new CooldownInfo(player);
+            if (_cooldownData == null)
+                _cooldownData = new StoredData3();
+            if (_cooldownData.cooldownList == null)
+                _cooldownData.cooldownList = new List<CooldownInfo>();
+
+            _cooldownData.cooldownList.Add(created);
+            _cooldownCache[player.userID] = created;
+            return created;
         }
 
         private void SendNoPerms(IPlayer player) => player?.Message(GetMessage("noPerms", player.Id));
@@ -2147,11 +2345,10 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(userId)) throw new ArgumentNullException(nameof(userId));
             if (string.IsNullOrEmpty(perm)) throw new ArgumentNullException(nameof(perm));
 
-            if (userId.Equals("server_console", StringComparison.OrdinalIgnoreCase) || permission.UserHasPermission(userId, "helicontrol.admin")) return true;
+            if (userId.Equals("server_console", StringComparison.OrdinalIgnoreCase) || permission.UserHasPermission(userId, "helicontrol.admin"))
+                return true;
 
-            var sb = Facepunch.Pool.Get<StringBuilder>();
-            try { return permission.UserHasPermission(userId, !perm.StartsWith("helicontrol") ? sb.Clear().Append("helicontrol.").Append(perm).ToString() : perm); }
-            finally { Facepunch.Pool.FreeUnmanaged(ref sb); }
+            return permission.UserHasPermission(userId, perm.StartsWith("helicontrol.", StringComparison.Ordinal) ? perm : "helicontrol." + perm);
         }
 
         private int Fitness(string individual, string target)
@@ -2774,7 +2971,15 @@ namespace Oxide.Plugins
 
         private void SaveLootData() => Interface.Oxide.DataFileSystem.WriteObject("HeliControlData", _lootData);
         private void SaveWeaponData() => Interface.Oxide.DataFileSystem.WriteObject("HeliControlWeapons", _weaponsData);
-        private void SaveCooldownData() => Interface.Oxide.DataFileSystem.WriteObject("HeliControlCooldowns", _cooldownData);
+        private void SaveCooldownData()
+        {
+            if (_cooldownData == null)
+                _cooldownData = new StoredData3();
+            if (_cooldownData.cooldownList == null)
+                _cooldownData.cooldownList = new List<CooldownInfo>();
+
+            Interface.Oxide.DataFileSystem.WriteObject("HeliControlCooldowns", _cooldownData);
+        }
         private void SaveSpawnData() => Interface.Oxide.DataFileSystem.WriteObject("HeliControlSpawns", _spawnsData);
     }
     #endregion
